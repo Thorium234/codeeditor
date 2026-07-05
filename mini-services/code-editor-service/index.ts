@@ -3,7 +3,7 @@ import { Server } from 'socket.io'
 import { v4 as uuidv4 } from 'uuid'
 
 const httpServer = createServer()
-const PORT = 3004
+const PORT = parseInt(process.env.PORT || '3004', 10)
 
 const io = new Server(httpServer, {
   // DO NOT change the path, it is used by Caddy to forward the request to the correct port
