@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Separator } from '@/components/ui/separator'
 import { Users, User, LogOut, Code } from 'lucide-react'
 import { io } from 'socket.io-client'
 
@@ -36,11 +35,9 @@ export default function CollaborativeEditor({ roomId, username, onLeave }: Colla
   const [cursors, setCursors] = useState<CursorPosition[]>([])
   const [version, setVersion] = useState(0)
   const [isConnected, setIsConnected] = useState(false)
-  const [lastOperationId, setLastOperationId] = useState(0)
   
   const editorRef = useRef<any>(null)
   const socketRef = useRef<any>(null)
-  const isLocalChange = useRef(false)
 
   useEffect(() => {
     // Connect to WebSocket server
@@ -83,8 +80,8 @@ export default function CollaborativeEditor({ roomId, username, onLeave }: Colla
     })
 
     socket.on('operation', (data: any) => {
-      if (!isLocalChange.current) {
-        setDocument(data.operation.text || document)
+      if (data.document) {
+        setDocument(data.document)
         setVersion(data.version)
       }
     })
@@ -110,42 +107,27 @@ export default function CollaborativeEditor({ roomId, username, onLeave }: Colla
   const handleEditorChange = (value: string | undefined) => {
     if (!value || !socketRef.current || !isConnected) return
 
-    isLocalChange.current = true
-    
-    const newOperationId = lastOperationId + 1
-    setLastOperationId(newOperationId)
-    
-    const operation = {
-      id: `op_${Date.now()}_${newOperationId}`,
-      userId: socketRef.current.id,
-      type: 'insert' as const,
-      position: 0, // Simplified - in real implementation, calculate position
-      text: value,
+    // Synchronize full document content with other users
+    socketRef.current.emit('document-sync', {
+      roomId,
+      document: value,
       version: version + 1
-    }
-
-    socketRef.current.emit('operation', {
-      operation,
-      roomId
     })
 
     setDocument(value)
-    setVersion(operation.version)
-    isLocalChange.current = false
+    setVersion(v => v + 1)
   }
 
-  const handleEditorCursorChange = (e: any) => {
-    if (!e || !socketRef.current || !isConnected) return
-
-    const position = e.position
-    socketRef.current.emit('cursor-position', {
-      roomId,
-      position
+  const handleEditorDidMount = (editor: any) => {
+    editorRef.current = editor
+    editor.onDidChangeCursorPosition((e: any) => {
+      if (!socketRef.current || !isConnected) return
+      const position = e.position
+      socketRef.current.emit('cursor-position', {
+        roomId,
+        position
+      })
     })
-  }
-
-  const getUserById = (userId: string): User | undefined => {
-    return users.find(user => user.id === userId)
   }
 
   const getInitials = (name: string): string => {
@@ -193,7 +175,7 @@ export default function CollaborativeEditor({ roomId, username, onLeave }: Colla
                 defaultLanguage="javascript"
                 value={document}
                 onChange={handleEditorChange}
-                onCursorChange={handleEditorCursorChange}
+                onMount={handleEditorDidMount}
                 theme="vs-dark"
                 options={{
                   fontSize: 14,

@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+.env.local
+.env.production
+.env.development
 
 # vercel
 .vercel
@@ -52,3 +55,22 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Runtime / generated files
+dist/
+*.tar.gz
+tmp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+
+# Mini-services service logs
+mini-services/*/service.log
+mini-services/*/production.log

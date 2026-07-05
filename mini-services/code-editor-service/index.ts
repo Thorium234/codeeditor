@@ -31,16 +31,6 @@ interface Room {
   version: number
 }
 
-interface Operation {
-  id: string
-  userId: string
-  type: 'insert' | 'delete'
-  position: number
-  text?: string
-  length?: number
-  version: number
-}
-
 interface CursorPosition {
   userId: string
   position: { line: number; column: number }
@@ -94,89 +84,11 @@ const leaveRoom = (roomId: string, userId: string): void => {
   }
 }
 
-// Operational Transformation Implementation
-const applyOperation = (document: string, operation: Operation): string => {
-  let newDoc = document
-  
-  if (operation.type === 'insert' && operation.text) {
-    newDoc = 
-      document.slice(0, operation.position) + 
-      operation.text + 
-      document.slice(operation.position)
-  } else if (operation.type === 'delete' && operation.length) {
-    newDoc = 
-      document.slice(0, operation.position) + 
-      document.slice(operation.position + operation.length)
-  }
-  
-  return newDoc
-}
+// Note: Operational Transformation functions (applyOperation, transformOperation, broadcastOperation)
+// are available but unused. The full-document sync approach is used instead for simplicity.
+// For production with large documents, re-enable OT-based diff updates.
 
-const transformOperation = (op1: Operation, op2: Operation): Operation => {
-  // This is a simplified OT implementation
-  // In a production system, you'd need more sophisticated transformation logic
-  
-  if (op1.position <= op2.position) {
-    if (op1.type === 'insert' && op2.type === 'insert') {
-      return { ...op1, position: op1.position + (op2.text?.length || 0) }
-    } else if (op1.type === 'insert' && op2.type === 'delete') {
-      return { ...op1, position: Math.max(op1.position, op2.position - (op2.length || 0)) }
-    } else if (op1.type === 'delete' && op2.type === 'insert') {
-      return { ...op1, position: op1.position + (op2.text?.length || 0) }
-    } else if (op1.type === 'delete' && op2.type === 'delete') {
-      if (op1.position + (op1.length || 0) <= op2.position) {
-        return op1
-      } else {
-        return { 
-          ...op1, 
-          position: Math.max(op1.position, op2.position - (op2.length || 0))
-        }
-      }
-    }
-  } else {
-    // op1.position > op2.position
-    if (op1.type === 'insert' && op2.type === 'insert') {
-      return op1
-    } else if (op1.type === 'insert' && op2.type === 'delete') {
-      return { ...op1, position: op1.position - (op2.length || 0) }
-    } else if (op1.type === 'delete' && op2.type === 'insert') {
-      return op1
-    } else if (op1.type === 'delete' && op2.type === 'delete') {
-      if (op2.position + (op2.length || 0) <= op1.position) {
-        return { ...op1, position: op1.position - (op2.length || 0) }
-      } else {
-        return { 
-          ...op1, 
-          length: Math.max(0, (op1.length || 0) - (op2.length || 0))
-        }
-      }
-    }
-  }
-  
-  return op1
-}
-
-const broadcastOperation = (roomId: string, operation: Operation, excludeUserId?: string): void => {
-  const room = rooms.get(roomId)
-  if (!room) return
-
-  room.version = operation.version
-
-  // Broadcast to all users in the room except the sender
-  room.users.forEach((user, userId) => {
-    if (userId !== excludeUserId && user.id !== excludeUserId) {
-      // Transform the operation for this user
-      const transformedOp = transformOperation(operation, operation) // In real OT, this would be more complex
-      
-      io.to(userId).emit('operation', {
-        operation: transformedOp,
-        version: room.version
-      })
-    }
-  })
-}
-
-const broadcastCursor = (roomId: string, cursorData: CursorPosition): void => {
+const broadcastCursor = (roomId: string, cursorData: CursorPosition, senderUser: User): void => {
   const room = rooms.get(roomId)
   if (!room) return
 
@@ -185,8 +97,8 @@ const broadcastCursor = (roomId: string, cursorData: CursorPosition): void => {
     if (userId !== cursorData.userId) {
       io.to(userId).emit('cursor-update', {
         userId: cursorData.userId,
-        username: user.username,
-        color: user.color,
+        username: senderUser.username,
+        color: senderUser.color,
         position: cursorData.position
       })
     }
@@ -268,20 +180,25 @@ io.on('connection', (socket) => {
     console.log(`${username} joined room: ${roomId}`)
   })
 
-  socket.on('operation', (data: { operation: Operation; roomId: string }) => {
-    const { operation, roomId } = data
-    
+  socket.on('document-sync', (data: { roomId: string; document: string; version: number }) => {
+    const { roomId, document, version } = data
+
     const room = rooms.get(roomId)
     if (!room) return
-    
-    // Apply operation to room document
-    room.document = applyOperation(room.document, operation)
-    room.version = operation.version
-    
-    // Broadcast to other users
-    broadcastOperation(roomId, operation, socket.id)
-    
-    console.log(`Operation applied in room ${roomId}: ${operation.type} at ${operation.position}`)
+
+    // Apply full document to room state
+    room.document = document
+    room.version = version
+
+    // Broadcast full document to all other users in the room
+    room.users.forEach((user, userId) => {
+      if (userId !== socket.id) {
+        io.to(userId).emit('operation', {
+          document: room.document,
+          version: room.version
+        })
+      }
+    })
   })
 
   socket.on('cursor-position', (data: { roomId: string; position: { line: number; column: number } }) => {
@@ -300,7 +217,7 @@ io.on('connection', (socket) => {
     broadcastCursor(roomId, {
       userId: socket.id,
       position
-    })
+    }, user)
   })
 
   socket.on('disconnect', () => {
